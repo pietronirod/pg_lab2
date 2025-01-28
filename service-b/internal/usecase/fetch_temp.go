@@ -5,20 +5,14 @@ import (
 	"service-b/internal/repository"
 )
 
-type FetchTempService interface {
-	Fetch(ctx context.Context, city string) (float64, error)
+type FetchTempService struct {
+	repo repository.TemperatureRepository
 }
 
-type fetchTempService struct{}
-
-func NewFetchTempService() FetchTempService {
-	return &fetchTempService{}
+func NewFetchTempService(repo repository.TemperatureRepository) *FetchTempService {
+	return &FetchTempService{repo: repo}
 }
 
-func (s *fetchTempService) Fetch(ctx context.Context, city string) (float64, error) {
-	temp, err := repository.FetchTemperature(ctx, city)
-	if err != nil {
-		return 0, err
-	}
-	return temp, nil
+func (s *FetchTempService) Fetch(ctx context.Context, city string) (float64, error) {
+	return s.repo.FetchTemperature(ctx, city)
 }

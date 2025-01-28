@@ -12,6 +12,7 @@ type Config struct {
 	WeatherAPIURL string `mapstructure:"WEATHERAPI_URL"`
 	WeatherAPIKey string `mapstructure:"WEATHERAPI_KEY"`
 	OTLPEndpoint  string `mapstructure:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	OTLPProtocol  string `mapstructure:"OTEL_EXPORTER_OTLP_PROTOCOL"`
 }
 
 var AppConfig *Config
@@ -28,7 +29,9 @@ func LoadConfig() *Config {
 	viper.SetDefault("SERVICE_B_URL", "http://service-b:8090")
 	viper.SetDefault("VIACEP_API_URL", "https://viacep.com.br/ws/")
 	viper.SetDefault("WEATHERAPI_URL", "http://api.weatherapi.com/v1/current.json")
+	viper.SetDefault("WEATHERAPI_KEY", "")
 	viper.SetDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+	viper.SetDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
 
 	// Tentar ler o arquivo de configuração
 	if err := viper.ReadInConfig(); err != nil {
@@ -42,7 +45,7 @@ func LoadConfig() *Config {
 
 	// **VALIDAÇÃO PARA EVITAR ERRO NA WEATHERAPI_KEY**
 	if config.WeatherAPIKey == "" {
-		log.Fatal("⚠️ WEATHERAPI_KEY is missing! Set it in .env or environment variables.")
+		log.Fatal("WEATHERAPI_KEY is missing! Set it in .env or environment variables.")
 	}
 
 	AppConfig = &config

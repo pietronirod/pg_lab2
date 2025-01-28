@@ -2,27 +2,17 @@ package usecase
 
 import (
 	"context"
-	"errors"
 	"service-b/internal/repository"
 )
 
-type FetchCityService interface {
-	Fetch(ctx context.Context, cep string) (string, error)
+type FetchCityService struct {
+	repo repository.CityRepository
 }
 
-type fetchCityService struct{}
-
-func NewFetchCityService() FetchCityService {
-	return &fetchCityService{}
+func NewFetchCityService(repo repository.CityRepository) *FetchCityService {
+	return &FetchCityService{repo: repo}
 }
 
-func (s *fetchCityService) Fetch(ctx context.Context, cep string) (string, error) {
-	city, err := repository.FetchCityFromCEP(ctx, cep)
-	if err != nil {
-		if errors.Is(err, repository.ErrCEPNotFound) {
-			return "", repository.ErrCEPNotFound
-		}
-		return "", err
-	}
-	return city, nil
+func (s *FetchCityService) Fetch(ctx context.Context, cep string) (string, error) {
+	return s.repo.FetchCityFromCEP(ctx, cep)
 }

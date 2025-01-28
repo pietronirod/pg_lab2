@@ -22,11 +22,11 @@ services:
     ports:
       - "8090:8090"
     environment:
-      - VIACEP_API_URL=https://viacep.com.br/ws/
-      - WEATHERAPI_URL=http://api.weatherapi.com/v1/current.json
+      - VIACEP_API_URL=${VIACEP_API_URL}
+      - WEATHERAPI_URL=${WEATHERAPI_URL}
       - WEATHERAPI_KEY=${WEATHERAPI_KEY}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL}
     env_file:
       - .env
     depends_on:
