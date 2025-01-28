@@ -6,6 +6,7 @@ services:
     ports:
       - "8080:8080"
     environment:
+      - SERVICE_B_URL=http://service-b:8090
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     depends_on:
@@ -21,8 +22,13 @@ services:
     ports:
       - "8090:8090"
     environment:
+      - VIACEP_API_URL=https://viacep.com.br/ws/
+      - WEATHERAPI_URL=http://api.weatherapi.com/v1/current.json
+      - WEATHERAPI_KEY=${WEATHERAPI_KEY}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    env_file:
+      - .env
     depends_on:
       - otel-collector
     networks:

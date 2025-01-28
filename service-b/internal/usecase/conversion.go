@@ -1,4 +1,4 @@
-package service
+package usecase
 
 func CelsiusToFahrenheit(c float64) float64 {
 	return c*1.8 + 32

@@ -10,14 +10,25 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
 )
 
+// CEPRequest define o formato esperado da requisição
 type CEPRequest struct {
 	CEP string `json:"cep"`
 }
 
-func CEPHandler(w http.ResponseWriter, r *http.Request) {
+// CEPHandler gerencia as requisições do service-a
+type CEPHandler struct {
+	serviceBURL string
+}
+
+// NewCEPHandler cria um novo CEPHandler
+func NewCEPHandler(serviceBURL string) *CEPHandler {
+	return &CEPHandler{serviceBURL: serviceBURL}
+}
+
+// Handle processa a requisição para encaminhar ao service-b
+func (h *CEPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	log.Println("CEPHandler: Request received")
 
 	ctx := r.Context()
@@ -38,6 +49,7 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("CEPHandler: CEP received %s", req.CEP)
 	span.SetAttributes(attribute.String("cep", req.CEP))
 
+	// Validar o CEP (precisa ter exatamente 8 dígitos)
 	if len(req.CEP) != 8 {
 		log.Printf("CEPHandler: Invalid CEP: %v", req.CEP)
 		span.SetStatus(codes.Error, "Invalid CEP length")
@@ -45,9 +57,9 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serviceBURL := "http://service-b:8090/cep/" + req.CEP
+	// Montar URL para chamar o Service B
+	serviceBURL := h.serviceBURL + "/cep/" + req.CEP
 	log.Printf("CEPHandler: Calling Service B at URL: %s", serviceBURL)
-	log.Printf("CEPHandler: Propagating TraceID=%s to Service B", span.SpanContext().TraceID().String())
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", serviceBURL, nil)
 	if err != nil {
@@ -58,7 +70,7 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(httpReq.Header))
+	// Instrumentar o cliente HTTP com OpenTelemetry
 	client := http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
@@ -68,7 +80,7 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("CEPHandler: Error calling Service B: %v", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Error calling Service B")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Service B unavailable", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
@@ -76,6 +88,7 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("CEPHandler: Response from Service B with status code: %d", resp.StatusCode)
 	span.SetAttributes(attribute.Int("service-b.status_code", resp.StatusCode))
 
+	// Encaminhar a resposta do Service B para o cliente
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("CEPHandler: Error reading response from Service B: %v", err)

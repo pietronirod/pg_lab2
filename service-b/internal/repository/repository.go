@@ -8,23 +8,32 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"service-b/internal/config"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 var ErrCEPNotFound = errors.New("CEP not found")
-var apiBaseURL = "https://viacep.com.br/ws/"
 
+// FetchCityFromCEP consulta a API ViaCEP para obter a cidade a partir do CEP
 func FetchCityFromCEP(ctx context.Context, cep string) (string, error) {
 	tracer := otel.Tracer("service-b")
 	ctx, span := tracer.Start(ctx, "fetch-city-from-cep")
 	defer span.End()
 
-	url := fmt.Sprintf("%s%s/json/", apiBaseURL, cep)
+	// Obter URL base do ViaCEP do Viper
+	cfg := config.LoadConfig()
+	viaCEPURL := cfg.ViaCEPAPIURL
+	if viaCEPURL == "" {
+		log.Fatal("VIACEP_API_URL is not set in configuration")
+	}
+
+	url := fmt.Sprintf("%s%s/json/", viaCEPURL, cep)
 	log.Printf("FetchCityFromCEP: Fetching city for CEP %s from URL: %s", cep, url)
 	span.SetAttributes(attribute.String("http.url", url), attribute.String("http.method", "GET"))
 
+	// Fazer a requisição HTTP
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -42,6 +51,7 @@ func FetchCityFromCEP(ctx context.Context, cep string) (string, error) {
 		return "", ErrCEPNotFound
 	}
 
+	// Decodificar o JSON retornado
 	var result struct {
 		Localidade string `json:"localidade"`
 	}
@@ -62,19 +72,31 @@ func FetchCityFromCEP(ctx context.Context, cep string) (string, error) {
 	return result.Localidade, nil
 }
 
+// FetchTemperature consulta a WeatherAPI para obter a temperatura de uma cidade
 func FetchTemperature(ctx context.Context, city string) (float64, error) {
 	tracer := otel.Tracer("service-b")
 	ctx, span := tracer.Start(ctx, "fetch-temperature")
 	defer span.End()
 
-	apiKey := "760d8548a2644f419c9200309252301"
+	// Obter chave da WeatherAPI e URL base do Viper
+	cfg := config.LoadConfig()
+	apiKey := cfg.WeatherAPIKey
+	weatherAPIURL := cfg.WeatherAPIURL
+	if apiKey == "" {
+		log.Fatal("WEATHERAPI_KEY is not set in configuration")
+	}
+	if weatherAPIURL == "" {
+		log.Fatal("WEATHERAPI_URL is not set in configuration")
+	}
+
 	encodedCity := url.QueryEscape(city)
-	url := fmt.Sprintf("http://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, encodedCity)
+	url := fmt.Sprintf("%s?key=%s&q=%s", weatherAPIURL, apiKey, encodedCity)
 
 	log.Printf("FetchTemperature: Fetching temperature for city: %s", city)
 	span.SetAttributes(attribute.String("http.url", url), attribute.String("http.method", "GET"))
 	log.Printf("FetchTemperature: Using WeatherAPI URL: %s", url)
 
+	// Fazer a requisição HTTP
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -93,6 +115,7 @@ func FetchTemperature(ctx context.Context, city string) (float64, error) {
 		return 0, fmt.Errorf("failed to fetch temperature for city: %s", city)
 	}
 
+	// Decodificar o JSON retornado
 	var result struct {
 		Current struct {
 			TempC float64 `json:"temp_c"`

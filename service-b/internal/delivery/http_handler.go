@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 	"service-b/internal/repository"
-	"service-b/internal/service"
+	"service-b/internal/usecase"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
+// CEPResponse define o formato da resposta do serviço
 type CEPResponse struct {
 	City  string  `json:"city"`
 	TempC float64 `json:"temp_C"`
@@ -21,7 +22,19 @@ type CEPResponse struct {
 	TempK float64 `json:"temp_K"`
 }
 
-func CEPHandler(w http.ResponseWriter, r *http.Request) {
+// CEPHandler gerencia as requisições para buscar cidade e temperatura
+type CEPHandler struct {
+	fetchCity usecase.FetchCityService
+	fetchTemp usecase.FetchTempService
+}
+
+// NewCEPHandler cria um novo handler
+func NewCEPHandler(fetchCity usecase.FetchCityService, fetchTemp usecase.FetchTempService) *CEPHandler {
+	return &CEPHandler{fetchCity: fetchCity, fetchTemp: fetchTemp}
+}
+
+// Handle processa a requisição para buscar cidade e temperatura pelo CEP
+func (h *CEPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	log.Println("CEPHandler: Request received")
 
 	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
@@ -33,23 +46,25 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 	cep := r.URL.Path[len("/cep/"):]
 	log.Printf("CEPHandler: CEP received: %s", cep)
 
+	// Validação do CEP
 	if len(cep) != 8 {
 		log.Printf("CEPHandler: Invalid CEP: %s", cep)
 		span.SetStatus(codes.Error, "Invalid CEP length")
-		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
+		h.writeErrorResponse(w, http.StatusUnprocessableEntity, "invalid zipcode")
 		return
 	}
 	span.SetAttributes(attribute.String("cep", cep))
 
-	city, err := repository.FetchCityFromCEP(ctx, cep)
+	// Buscar cidade pelo CEP
+	city, err := h.fetchCity.Fetch(ctx, cep)
 	if err != nil {
 		log.Printf("CEPHandler: Error fetching city for CEP %s: %v", cep, err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Error fetching city")
 		if errors.Is(err, repository.ErrCEPNotFound) {
-			http.Error(w, "can not find zipcode", http.StatusNotFound)
+			h.writeErrorResponse(w, http.StatusNotFound, "can not find zipcode")
 		} else {
-			http.Error(w, "error fetching city", http.StatusInternalServerError)
+			h.writeErrorResponse(w, http.StatusInternalServerError, "error fetching city")
 		}
 		return
 	}
@@ -57,21 +72,24 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("CEPHandler: City found for CEP %s: %s", cep, city)
 	span.SetAttributes(attribute.String("city", city))
 
-	tempC, err := repository.FetchTemperature(ctx, city)
+	// Buscar temperatura para a cidade
+	tempC, err := h.fetchTemp.Fetch(ctx, city)
 	if err != nil {
 		log.Printf("CEPHandler: Error fetching temperature for city %s: %v", city, err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Error fetching temperature")
-		http.Error(w, "error fetching temperature", http.StatusInternalServerError)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "error fetching temperature")
 		return
 	}
 
 	log.Printf("CEPHandler: Temperature for city %s: %f°C", city, tempC)
 
-	tempF := service.CelsiusToFahrenheit(tempC)
-	tempK := service.CelsiusToKelvin(tempC)
+	// Converte as temperaturas
+	tempF := usecase.CelsiusToFahrenheit(tempC)
+	tempK := usecase.CelsiusToKelvin(tempC)
 	log.Printf("CEPHandler: Converted temperatures for city %s: %f°F, %f°K", city, tempF, tempK)
 
+	// Monta a resposta
 	response := CEPResponse{
 		City:  city,
 		TempC: tempC,
@@ -79,16 +97,21 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 		TempK: tempK,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("CEPHandler: Error encoding response: %v", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Error encoding response")
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
+	h.writeSuccessResponse(w, response)
 	span.SetStatus(codes.Ok, "Successfully processed CEP")
 	log.Println("CEPHandler: Request processed successfully")
+}
+
+// writeErrorResponse padroniza as respostas de erro
+func (h *CEPHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// writeSuccessResponse padroniza as respostas de sucesso
+func (h *CEPHandler) writeSuccessResponse(w http.ResponseWriter, response CEPResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
