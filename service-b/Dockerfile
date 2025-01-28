@@ -1,11 +1,15 @@
-FROM golang:1.20 as builder
+FROM golang:1.23 AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod tidy
+RUN go mod download
 COPY . .
-RUN go build -o service-b .
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+RUN go build -o service-b ./cmd/main.go
 
-FROM grc.io/distroless/base-debian10
-COPY --from=builder /app/service-b /service-b
-EXPOSE 8081
-ENTRYPOINT [ "/service-b" ]
+FROM scratch
+WORKDIR /
+COPY --from=builder /app/service-b .
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+EXPOSE 8090
+
+CMD [ "./service-b" ]

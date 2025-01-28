@@ -1,52 +1,50 @@
-version: "3.8"
-
 services:
   service-a:
     build:
       context: ./service-a
       dockerfile: Dockerfile
     ports:
-      - "8081:8081"
-    depends_on:
-      - service-b
+      - "8080:8080"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_SERVICE_NAME=service-a
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    depends_on:
+      - service-b
+      - otel-collector
     networks:
-      - tracing
+      - otel-network
 
   service-b:
     build:
       context: ./service-b
       dockerfile: Dockerfile
     ports:
-      - "8082:8082"
-    depends_on:
-      - otel-collector
+      - "8090:8090"
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - OTEL_SERVICE_NAME=service-b
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    depends_on:
+      - otel-collector
     networks:
-      - tracing
-  
+      - otel-network
+
   otel-collector:
     image: otel/opentelemetry-collector:latest
-    command: ["--config=/etc/otel-collector-config.yml"]
-    volumes:
-      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
     ports:
       - "4317:4317"
-      - "55680:55680"
+      - "55681:55681"
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-config.yaml:/etc/otel-collector-config.yaml
     networks:
-      - tracing
+      - otel-network
 
   zipkin:
     image: openzipkin/zipkin
     ports:
       - "9411:9411"
     networks:
-      - tracing
+      - otel-network
 
 networks:
-  tracing:
-    driver: bridge
+  otel-network:
