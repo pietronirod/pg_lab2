@@ -5,11 +5,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"service-a/internal/common"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // CEPRequest define o formato esperado da requisição
@@ -33,75 +35,64 @@ func (h *CEPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	tracer := otel.Tracer("service-a")
-	ctx, span := tracer.Start(ctx, "process-cep-handler")
+	_, span := tracer.Start(ctx, "HandleRequest")
 	defer span.End()
 
+	// Decodificar a requisição
 	var req CEPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("CEPHandler: Error decoding request body: %v", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Invalid JSON body")
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CEP == "" {
+		span.SetStatus(codes.Error, "Invalid request format")
+		common.NewErrorResponse(w, http.StatusBadRequest, "Invalid request format", span.SpanContext().TraceID().String())
 		return
 	}
-	defer r.Body.Close()
 
-	log.Printf("CEPHandler: CEP received %s", req.CEP)
-	span.SetAttributes(attribute.String("cep", req.CEP))
-
-	// Validar o CEP (precisa ter exatamente 8 dígitos)
+	// Validação do CEP
 	if len(req.CEP) != 8 {
-		log.Printf("CEPHandler: Invalid CEP: %v", req.CEP)
-		span.SetStatus(codes.Error, "Invalid CEP length")
-		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
+		span.SetStatus(codes.Error, "Invalid CEP format")
+		common.NewErrorResponse(w, http.StatusBadRequest, "Invalid CEP format", span.SpanContext().TraceID().String())
 		return
 	}
 
-	// Montar URL para chamar o Service B
-	serviceBURL := h.serviceBURL + "/cep/" + req.CEP
-	log.Printf("CEPHandler: Calling Service B at URL: %s", serviceBURL)
+	// Encaminhar a requisição ao service-b
+	url := h.serviceBURL + "/cep/" + req.CEP
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", serviceBURL, nil)
+	// Criar uma nova requisição HTTP com o contexto de tracing
+	reqServiceB, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		log.Printf("CEPHandler: Error creating request to Service B: %v", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Error creating request to Service B")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		span.SetStatus(codes.Error, "Failed to create request to service-b")
+		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to create request to service-b", span.SpanContext().TraceID().String())
 		return
 	}
 
-	// Instrumentar o cliente HTTP com OpenTelemetry
-	client := http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-	}
+	// Propagar o contexto de tracing na requisição
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(reqServiceB.Header))
 
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		log.Printf("CEPHandler: Error calling Service B: %v", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Error calling Service B")
-		http.Error(w, "Service B unavailable", http.StatusInternalServerError)
+	// Enviar a requisição ao service-b
+	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+	resp, err := client.Do(reqServiceB)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		span.SetStatus(codes.Error, "Failed to contact service-b")
+		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to contact service-b", span.SpanContext().TraceID().String())
+		if err == nil {
+			defer resp.Body.Close()
+		}
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("CEPHandler: Response from Service B with status code: %d", resp.StatusCode)
-	span.SetAttributes(attribute.Int("service-b.status_code", resp.StatusCode))
-
-	// Encaminhar a resposta do Service B para o cliente
+	// Ler a resposta do service-b
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("CEPHandler: Error reading response from Service B: %v", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Error reading response from Service B")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		span.SetStatus(codes.Error, "Failed to read response from service-b")
+		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to read response from service-b", span.SpanContext().TraceID().String())
 		return
 	}
 
+	// Encaminhar a resposta ao cliente
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
 
-	span.SetStatus(codes.Ok, "Successfully processed CEP")
-	log.Println("CEPHandler: Request processed successfully")
+	span.SetStatus(codes.Ok, "Request handled successfully")
+	span.SetAttributes(attribute.String("CEP", req.CEP))
 }

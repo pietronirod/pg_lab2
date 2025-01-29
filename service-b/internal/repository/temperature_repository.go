@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 type TemperatureRepository interface {
@@ -19,10 +20,12 @@ type TemperatureRepository interface {
 
 type temperatureRepository struct{}
 
+// NewTemperatureRepository cria um novo repositório TemperatureRepository
 func NewTemperatureRepository() TemperatureRepository {
 	return &temperatureRepository{}
 }
 
+// FetchTemperature busca a temperatura de uma cidade
 func (r *temperatureRepository) FetchTemperature(ctx context.Context, city string) (float64, error) {
 	tracer := otel.Tracer("service-b")
 	ctx, span := tracer.Start(ctx, "fetch-temperature")
@@ -34,17 +37,25 @@ func (r *temperatureRepository) FetchTemperature(ctx context.Context, city strin
 
 	log.Printf("FetchTemperature: Fetching temperature for city: %s", city)
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		log.Printf("FetchTemperature: Error making request to WeatherAPI: %v", err)
-		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create request")
+		log.Printf("Error creating request: %v", err)
+		return 0, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		span.SetStatus(codes.Error, "Failed to fetch temperature")
+		log.Printf("Error fetching temperature: %v", err)
 		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("FetchTemperature: WeatherAPI returned non-200 status: %d", resp.StatusCode)
-		return 0, fmt.Errorf("failed to fetch temperature for city: %s", city)
+		span.SetStatus(codes.Error, fmt.Sprintf("Non-OK HTTP status: %s", resp.Status))
+		log.Printf("Non-OK HTTP status: %s", resp.Status)
+		return 0, fmt.Errorf("non-OK HTTP status: %s", resp.Status)
 	}
 
 	var result struct {
@@ -53,12 +64,12 @@ func (r *temperatureRepository) FetchTemperature(ctx context.Context, city strin
 		} `json:"current"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("FetchTemperature: Error decoding response: %v", err)
-		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to decode response")
+		log.Printf("Error decoding response: %v", err)
 		return 0, err
 	}
 
-	span.SetAttributes(attribute.Float64("fetch.temperature_c", result.Current.TempC))
-
+	span.SetAttributes(attribute.String("city", city), attribute.Float64("temperature", result.Current.TempC))
+	span.SetStatus(codes.Ok, "Successfully fetched temperature")
 	return result.Current.TempC, nil
 }

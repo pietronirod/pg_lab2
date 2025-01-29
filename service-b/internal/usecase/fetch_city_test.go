@@ -1,16 +1,16 @@
-package usecase_test
+package usecase
 
 import (
 	"context"
-	"service-b/internal/repository"
-	"service-b/internal/usecase"
+	"fmt"
 	"testing"
+
+	"service-b/internal/repository"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// Mock para o repository
 type MockRepository struct {
 	mock.Mock
 }
@@ -22,7 +22,7 @@ func (m *MockRepository) FetchCityFromCEP(ctx context.Context, cep string) (stri
 
 func TestFetchCityService_Success(t *testing.T) {
 	mockRepo := new(MockRepository)
-	service := usecase.NewFetchCityService(mockRepo)
+	service := NewFetchCityService(mockRepo)
 
 	cep := "01001000"
 	expectedCity := "São Paulo"
@@ -42,7 +42,7 @@ func TestFetchCityService_Success(t *testing.T) {
 
 func TestFetchCityService_CEPNotFound(t *testing.T) {
 	mockRepo := new(MockRepository)
-	service := usecase.NewFetchCityService(mockRepo)
+	service := NewFetchCityService(mockRepo)
 
 	cep := "99999999"
 
@@ -53,7 +53,29 @@ func TestFetchCityService_CEPNotFound(t *testing.T) {
 	city, err := service.Fetch(context.Background(), cep)
 
 	// Validação
-	require.ErrorIs(t, err, repository.ErrCEPNotFound)
+	require.Error(t, err)
+	require.Equal(t, repository.ErrCEPNotFound, err)
+	require.Empty(t, city)
+
+	mockRepo.AssertExpectations(t)
+}
+
+func TestFetchCityService_APIError(t *testing.T) {
+	mockRepo := new(MockRepository)
+	service := NewFetchCityService(mockRepo)
+
+	cep := "01001000"
+	expectedError := fmt.Errorf("API error")
+
+	// Configuração do mock para erro de comunicação com a API
+	mockRepo.On("FetchCityFromCEP", mock.Anything, cep).Return("", expectedError)
+
+	// Execução do teste
+	city, err := service.Fetch(context.Background(), cep)
+
+	// Validação
+	require.Error(t, err)
+	require.Equal(t, expectedError, err)
 	require.Empty(t, city)
 
 	mockRepo.AssertExpectations(t)

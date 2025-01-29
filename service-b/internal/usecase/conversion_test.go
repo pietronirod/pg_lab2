@@ -1,20 +1,41 @@
-package usecase_test
+package usecase
 
 import (
-	"service-b/internal/usecase"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCelsiusToFahrenheit(t *testing.T) {
-	require.Equal(t, 32.0, usecase.CelsiusToFahrenheit(0))
-	require.Equal(t, 212.0, usecase.CelsiusToFahrenheit(100))
-	require.Equal(t, 98.6, usecase.CelsiusToFahrenheit(37))
+	tests := []struct {
+		celsius  float64
+		expected float64
+	}{
+		{0, 32},
+		{100, 212},
+		{-40, -40},
+		{37, 98.6},
+	}
+
+	for _, test := range tests {
+		result := CelsiusToFahrenheit(test.celsius)
+		assert.Equal(t, test.expected, result)
+	}
 }
 
 func TestCelsiusToKelvin(t *testing.T) {
-	require.Equal(t, 273.15, usecase.CelsiusToKelvin(0))
-	require.Equal(t, 373.15, usecase.CelsiusToKelvin(100))
-	require.Equal(t, 310.15, usecase.CelsiusToKelvin(37))
+	tests := []struct {
+		celsius  float64
+		expected float64
+	}{
+		{0, 273.15},
+		{100, 373.15},
+		{-273.15, 0},
+		{37, 310.15},
+	}
+
+	for _, test := range tests {
+		result := CelsiusToKelvin(test.celsius)
+		assert.Equal(t, test.expected, result)
+	}
 }

@@ -28,7 +28,7 @@ func LoadConfig() *Config {
 	viper.SetDefault("SERVICE_B_URL", "http://service-b:8090")
 	viper.SetDefault("VIACEP_API_URL", "https://viacep.com.br/ws/")
 	viper.SetDefault("WEATHERAPI_URL", "http://api.weatherapi.com/v1/current.json")
-	viper.SetDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+	viper.SetDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
 
 	// Lê as configurações
 	if err := viper.ReadInConfig(); err != nil {
@@ -38,6 +38,11 @@ func LoadConfig() *Config {
 	var config Config
 	if err := viper.Unmarshal(&config); err != nil {
 		log.Fatalf("Unable to decode into struct: %v", err)
+	}
+
+	// Validação da configuração obrigatória
+	if config.ServiceBURL == "" {
+		log.Fatalf("SERVICE_B_URL is required")
 	}
 
 	AppConfig = &config

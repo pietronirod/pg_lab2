@@ -11,6 +11,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
+// InitTracing inicializa o tracing distribuído para o serviço especificado
 func InitTracing(serviceName string) func() {
 	exporter, err := otlptracegrpc.New(context.Background())
 	if err != nil {

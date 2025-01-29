@@ -1,31 +1,29 @@
-package usecase_test
+package usecase
 
 import (
 	"context"
-	"errors"
-	"service-b/internal/usecase"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// Mock para o repository
-type MockTempRepository struct {
+type MockTemperatureRepository struct {
 	mock.Mock
 }
 
-func (m *MockTempRepository) FetchTemperature(ctx context.Context, city string) (float64, error) {
+func (m *MockTemperatureRepository) FetchTemperature(ctx context.Context, city string) (float64, error) {
 	args := m.Called(ctx, city)
 	return args.Get(0).(float64), args.Error(1)
 }
 
 func TestFetchTempService_Success(t *testing.T) {
-	mockRepo := new(MockTempRepository)
-	service := usecase.NewFetchTempService(mockRepo)
+	mockRepo := new(MockTemperatureRepository)
+	service := NewFetchTempService(mockRepo)
 
 	city := "São Paulo"
-	expectedTemp := 25.0
+	expectedTemp := 25.5
 
 	// Configuração do mock
 	mockRepo.On("FetchTemperature", mock.Anything, city).Return(expectedTemp, nil)
@@ -40,21 +38,23 @@ func TestFetchTempService_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-func TestFetchTempService_Error(t *testing.T) {
-	mockRepo := new(MockTempRepository)
-	service := usecase.NewFetchTempService(mockRepo)
+func TestFetchTempService_APIError(t *testing.T) {
+	mockRepo := new(MockTemperatureRepository)
+	service := NewFetchTempService(mockRepo)
 
-	city := "Desconhecida"
+	city := "São Paulo"
+	expectedError := fmt.Errorf("API error")
 
-	// Configuração do mock para erro
-	mockRepo.On("FetchTemperature", mock.Anything, city).Return(0.0, errors.New("API error"))
+	// Configuração do mock para erro de comunicação com a API
+	mockRepo.On("FetchTemperature", mock.Anything, city).Return(0.0, expectedError)
 
 	// Execução do teste
 	temp, err := service.Fetch(context.Background(), city)
 
 	// Validação
 	require.Error(t, err)
-	require.Zero(t, temp)
+	require.Equal(t, expectedError, err)
+	require.Equal(t, 0.0, temp)
 
 	mockRepo.AssertExpectations(t)
 }
