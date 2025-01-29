@@ -100,6 +100,14 @@ O sistema é composto por dois serviços:
 - **GET /cep/{cep}**
   - Response: `{ "city": "São Paulo", "temp_C": 28.5, "temp_F": 28.5, "temp_K": 28.5 }`
 
+## Acessando e Visualizando os Logs no Zipkin
+
+1. Certifique-se de que o Zipkin está rodando. O Zipkin é iniciado automaticamente com o Docker Compose.
+
+2. Acesse a interface do Zipkin no navegador: <http://localhost:9411>
+
+3. Utilize a interface do Zipkin para visualizar os traces e spans gerados pelos serviços A e B.
+
 ## Referências
 
 - [OpenTelemetry](https://opentelemetry.io/)
