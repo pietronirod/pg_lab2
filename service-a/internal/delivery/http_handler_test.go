@@ -2,85 +2,146 @@ package delivery
 
 import (
 	"bytes"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-// Mock do serviço B para retornar uma resposta simulada
-func mockServiceBResponse(statusCode int, responseBody string) *httptest.Server {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(statusCode)
-		w.Write([]byte(responseBody))
-	})
-	return httptest.NewServer(handler)
+type MockHTTPClient struct {
+	mock.Mock
+}
+
+func (m *MockHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	args := m.Called(req)
+	return args.Get(0).(*http.Response), args.Error(1)
 }
 
 func TestCEPHandler_Success(t *testing.T) {
-	mockServer := mockServiceBResponse(http.StatusOK, `{"city": "São Paulo", "temp_C": 25.5, "temp_F": 77.9, "temp_K": 298.65}`)
-	defer mockServer.Close()
+	serviceBURL := "http://service-b:8090"
+	mockClient := new(MockHTTPClient)
+	handler := NewCEPHandler(serviceBURL, mockClient)
 
-	handler := NewCEPHandler(mockServer.URL)
+	cep := "01001000"
+	requestBody := `{"cep":"` + cep + `"}`
 
-	reqBody := []byte(`{"cep": "01001000"}`)
-	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	responseBody := `{"city":"São Paulo","temp_C":28.5,"temp_F":83.3,"temp_K":301.65}`
+	mockResponse := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       ioutil.NopCloser(bytes.NewBufferString(responseBody)),
+	}
+
+	mockClient.On("Do", mock.Anything).Return(mockResponse, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewBufferString(requestBody))
 	w := httptest.NewRecorder()
 
 	handler.Handle(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	expectedResponse := `{"city": "São Paulo", "temp_C": 25.5, "temp_F": 77.9, "temp_K": 298.65}`
-	assert.JSONEq(t, expectedResponse, w.Body.String())
+	assert.JSONEq(t, responseBody, w.Body.String())
+
+	mockClient.AssertExpectations(t)
 }
 
 func TestCEPHandler_InvalidCEP(t *testing.T) {
-	handler := NewCEPHandler("http://mock-service-b")
+	serviceBURL := "http://service-b:8090"
+	mockClient := new(MockHTTPClient)
+	handler := NewCEPHandler(serviceBURL, mockClient)
 
-	reqBody := []byte(`{"cep": "123"}`) // CEP inválido
-	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	cep := "123"
+	requestBody := `{"cep":"` + cep + `"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewBufferString(requestBody))
 	w := httptest.NewRecorder()
 
 	handler.Handle(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	expectedResponse := `{"message": "Invalid CEP format", "code": 400, "trace_id": "00000000000000000000000000000000"}`
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	expectedResponse := `{"error":"invalid zipcode"}`
 	assert.JSONEq(t, expectedResponse, w.Body.String())
 }
 
-func TestCEPHandler_InvalidRequestFormat(t *testing.T) {
-	handler := NewCEPHandler("http://mock-service-b")
+func TestCEPHandler_CEPNotFound(t *testing.T) {
+	serviceBURL := "http://service-b:8090"
+	mockClient := new(MockHTTPClient)
+	handler := NewCEPHandler(serviceBURL, mockClient)
 
-	reqBody := []byte(`{"invalid": "format"}`) // Formato de requisição inválido
-	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	cep := "99999999"
+	requestBody := `{"cep":"` + cep + `"}`
+
+	responseBody := `{"error":"can not find zipcode"}`
+	mockResponse := &http.Response{
+		StatusCode: http.StatusNotFound,
+		Body:       ioutil.NopCloser(bytes.NewBufferString(responseBody)),
+	}
+
+	mockClient.On("Do", mock.Anything).Return(mockResponse, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewBufferString(requestBody))
 	w := httptest.NewRecorder()
 
 	handler.Handle(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	expectedResponse := `{"message": "Invalid request format", "code": 400, "trace_id": "00000000000000000000000000000000"}`
-	assert.JSONEq(t, expectedResponse, w.Body.String())
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.JSONEq(t, responseBody, w.Body.String())
+
+	mockClient.AssertExpectations(t)
 }
 
-func TestCEPHandler_ServiceBUnavailable(t *testing.T) {
-	// Criamos um servidor que retorna "Service B unavailable"
-	mockServer := mockServiceBResponse(http.StatusInternalServerError, `{"message": "Service B unavailable"}`)
-	defer mockServer.Close()
+func TestCEPHandler_FetchCityError(t *testing.T) {
+	serviceBURL := "http://service-b:8090"
+	mockClient := new(MockHTTPClient)
+	handler := NewCEPHandler(serviceBURL, mockClient)
 
-	handler := NewCEPHandler(mockServer.URL)
+	cep := "01001000"
+	requestBody := `{"cep":"` + cep + `"}`
 
-	reqBody := []byte(`{"cep": "01001000"}`)
-	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	responseBody := `{"error":"error fetching city"}`
+	mockResponse := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       ioutil.NopCloser(bytes.NewBufferString(responseBody)),
+	}
+
+	mockClient.On("Do", mock.Anything).Return(mockResponse, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewBufferString(requestBody))
 	w := httptest.NewRecorder()
 
 	handler.Handle(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	expectedResponse := `{"message": "Failed to contact service-b", "code": 500, "trace_id": "00000000000000000000000000000000"}`
-	assert.JSONEq(t, expectedResponse, w.Body.String())
+	assert.JSONEq(t, responseBody, w.Body.String())
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestCEPHandler_FetchTempError(t *testing.T) {
+	serviceBURL := "http://service-b:8090"
+	mockClient := new(MockHTTPClient)
+	handler := NewCEPHandler(serviceBURL, mockClient)
+
+	cep := "01001000"
+	requestBody := `{"cep":"` + cep + `"}`
+
+	responseBody := `{"error":"error fetching temperature"}`
+	mockResponse := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       ioutil.NopCloser(bytes.NewBufferString(responseBody)),
+	}
+
+	mockClient.On("Do", mock.Anything).Return(mockResponse, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/cep", bytes.NewBufferString(requestBody))
+	w := httptest.NewRecorder()
+
+	handler.Handle(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.JSONEq(t, responseBody, w.Body.String())
+
+	mockClient.AssertExpectations(t)
 }

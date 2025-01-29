@@ -8,15 +8,20 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
+// InitTracing inicializa o rastreamento com OTEL
 func InitTracing(serviceName string) func() {
-	exporter, err := otlptracegrpc.New(context.Background())
+	ctx := context.Background()
+
+	// Configurar o exportador OTLP
+	exporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create OTLP exporter: %v", err)
+		log.Fatalf("Failed to create OTLP trace exporter: %v", err)
 	}
 
+	// Configurar o provedor de rastreamento
 	tp := trace.NewTracerProvider(
 		trace.WithBatcher(exporter),
 		trace.WithResource(resource.NewWithAttributes(
@@ -28,8 +33,8 @@ func InitTracing(serviceName string) func() {
 	otel.SetTracerProvider(tp)
 
 	return func() {
-		if err := tp.Shutdown(context.Background()); err != nil {
-			log.Fatalf("Failed to shutdown TraceProvider: %v", err)
+		if err := tp.Shutdown(ctx); err != nil {
+			log.Fatalf("Failed to shutdown TracerProvider: %v", err)
 		}
 	}
 }

@@ -12,28 +12,28 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
-func init() {
-	// Configuração do propagador OpenTelemetry
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-}
-
 func main() {
-	// Carregar configurações com Viper
+	// Carregar a configuração
 	cfg := config.LoadConfig()
 
-	// Inicializar o tracing distribuído
-	cleanup := tracing.InitTracing("service-a")
-	defer cleanup()
+	// Inicializar tracing
+	shutdown := tracing.InitTracing("service-a")
+	defer shutdown()
 
-	// Configurar o handler com a URL do Service B
-	handler := delivery.NewCEPHandler(cfg.ServiceBURL)
+	// Configurar o propagador de contexto
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	// Rota HTTP
+	// Criar instância do handler passando os valores corretamente
+	httpClient := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+	handler := delivery.NewCEPHandler(cfg.ServiceBURL, httpClient)
+
 	mux := http.NewServeMux()
-	mux.Handle("/cep", otelhttp.NewHandler(http.HandlerFunc(handler.Handle), "CEPHandler"))
+	mux.Handle("/cep", otelhttp.NewHandler(http.HandlerFunc(handler.Handle), "cep-handler"))
 
-	log.Println("Service A is running on port 8080")
+	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("Error starting server: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }

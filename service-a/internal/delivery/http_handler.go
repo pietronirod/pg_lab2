@@ -2,97 +2,107 @@ package delivery
 
 import (
 	"encoding/json"
-	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"service-a/internal/common"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 )
 
-// CEPRequest define o formato esperado da requisição
-type CEPRequest struct {
-	CEP string `json:"cep"`
+// HTTPClient é uma interface para o cliente HTTP
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
 }
 
-// CEPHandler gerencia as requisições do service-a
+// CEPHandler gerencia as requisições para enviar o CEP ao serviço B
 type CEPHandler struct {
 	serviceBURL string
+	httpClient  HTTPClient
 }
 
-// NewCEPHandler cria um novo CEPHandler
-func NewCEPHandler(serviceBURL string) *CEPHandler {
-	return &CEPHandler{serviceBURL: serviceBURL}
+// NewCEPHandler cria um novo handler
+func NewCEPHandler(serviceBURL string, httpClient HTTPClient) *CEPHandler {
+	return &CEPHandler{serviceBURL: serviceBURL, httpClient: httpClient}
 }
 
-// Handle processa a requisição para encaminhar ao service-b
+// Handle processa a requisição para enviar o CEP ao serviço B
 func (h *CEPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	log.Println("CEPHandler: Request received")
 
-	ctx := r.Context()
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	tracer := otel.Tracer("service-a")
-	_, span := tracer.Start(ctx, "HandleRequest")
+	ctx, span := tracer.Start(ctx, "process-cep-handler")
 	defer span.End()
+	log.Printf("CEPHandler: Received TraceID=%s", span.SpanContext().TraceID().String())
 
-	// Decodificar a requisição
-	var req CEPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CEP == "" {
-		span.SetStatus(codes.Error, "Invalid request format")
-		common.NewErrorResponse(w, http.StatusBadRequest, "Invalid request format", span.SpanContext().TraceID().String())
+	var requestBody struct {
+		CEP string `json:"cep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		log.Printf("CEPHandler: Invalid request body: %v", err)
+		span.SetStatus(codes.Error, "Invalid request body")
+		h.writeErrorResponse(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	// Validação do CEP
-	if len(req.CEP) != 8 {
-		span.SetStatus(codes.Error, "Invalid CEP format")
-		common.NewErrorResponse(w, http.StatusBadRequest, "Invalid CEP format", span.SpanContext().TraceID().String())
+	if len(requestBody.CEP) != 8 {
+		log.Printf("CEPHandler: Invalid CEP: %s", requestBody.CEP)
+		span.SetStatus(codes.Error, "Invalid CEP length")
+		h.writeErrorResponse(w, http.StatusUnprocessableEntity, "invalid zipcode")
 		return
 	}
+	span.SetAttributes(attribute.String("cep", requestBody.CEP))
 
-	// Encaminhar a requisição ao service-b
-	url := h.serviceBURL + "/cep/" + req.CEP
-
-	// Criar uma nova requisição HTTP com o contexto de tracing
-	reqServiceB, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Enviar CEP ao serviço B
+	serviceBURL := h.serviceBURL + "/cep/" + requestBody.CEP
+	req, err := http.NewRequestWithContext(ctx, "GET", serviceBURL, nil)
 	if err != nil {
-		span.SetStatus(codes.Error, "Failed to create request to service-b")
-		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to create request to service-b", span.SpanContext().TraceID().String())
+		log.Printf("CEPHandler: Error creating request to service B: %v", err)
+		span.SetStatus(codes.Error, "Error creating request to service B")
+		h.writeErrorResponse(w, http.StatusInternalServerError, "error creating request to service B")
 		return
 	}
 
-	// Propagar o contexto de tracing na requisição
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(reqServiceB.Header))
+	// Propagar o contexto de rastreamento na requisição HTTP
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	// Enviar a requisição ao service-b
-	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
-	resp, err := client.Do(reqServiceB)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		span.SetStatus(codes.Error, "Failed to contact service-b")
-		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to contact service-b", span.SpanContext().TraceID().String())
-		if err == nil {
-			defer resp.Body.Close()
-		}
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		log.Printf("CEPHandler: Error contacting service B: %v", err)
+		span.SetStatus(codes.Error, "Error contacting service B")
+		h.writeErrorResponse(w, http.StatusInternalServerError, "error contacting service B")
 		return
 	}
 	defer resp.Body.Close()
 
-	// Ler a resposta do service-b
-	body, err := io.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		span.SetStatus(codes.Error, "Failed to read response from service-b")
-		common.NewErrorResponse(w, http.StatusInternalServerError, "Failed to read response from service-b", span.SpanContext().TraceID().String())
+		log.Printf("CEPHandler: Error reading response from service B: %v", err)
+		span.SetStatus(codes.Error, "Error reading response from service B")
+		h.writeErrorResponse(w, http.StatusInternalServerError, "error reading response from service B")
 		return
 	}
 
-	// Encaminhar a resposta ao cliente
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	w.Write(body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("CEPHandler: Service B returned error: %s", body)
+		span.SetStatus(codes.Error, "Service B returned error")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return
+	}
 
-	span.SetStatus(codes.Ok, "Request handled successfully")
-	span.SetAttributes(attribute.String("CEP", req.CEP))
+	// Responder com a resposta do serviço B
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(body)
+}
+
+func (h *CEPHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, message string) {
+	w.WriteHeader(statusCode)
+	w.Write([]byte(`{"error": "` + message + `"}`))
 }
