@@ -10,7 +10,6 @@ FROM scratch
 WORKDIR /
 COPY --from=builder /app/service-b .
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY .env .env
 EXPOSE 8090
 
 CMD [ "./service-b" ]
